@@ -168,6 +168,8 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
+const resolvedDuels = new Set();
+
 async function handleDuelResponse(interaction, challenger, opponent) {
     console.log(`⚔️ Дуель між ${challenger.username} і ${opponent.username}`);
 
@@ -216,6 +218,9 @@ async function handleDuelResponse(interaction, challenger, opponent) {
 
 async function handleResultButton(interaction) {
     const [result, challengerId, opponentId] = interaction.customId.split('_');
+    const duelId = `${challengerId}_${opponentId}`;
+
+    if (resolvedDuels.has(duelId)) return;
 
     if (!['win', 'lose'].includes(result)) return;
 
@@ -225,6 +230,8 @@ async function handleResultButton(interaction) {
             ephemeral: true
         });
     }
+
+    resolvedDuels.add(duelId);
 
     let winner, loser;
 
