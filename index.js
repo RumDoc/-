@@ -139,7 +139,7 @@ async function handleDuelCommand(interaction) {
         });
 
         const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id === opponent.id;
-        const collector = interaction.channel.createMessageComponentCollector({ filter, time: 15000 });
+        const collector = interaction.channel.createMessageComponentCollector({ filter  });
 
         collector.on('collect', async i => {
             await handleDuelResponse(i, challenger, opponent);
@@ -152,7 +152,7 @@ async function handleDuelCommand(interaction) {
         });
 
         const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id !== challenger.id;
-        const collector = interaction.channel.createMessageComponentCollector({ filter, max: 1, time: 15000 });
+        const collector = interaction.channel.createMessageComponentCollector({ filter, max: 1  });
 
         collector.on('collect', async i => {
             if (i.customId === 'accept') {
