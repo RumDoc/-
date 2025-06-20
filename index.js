@@ -83,155 +83,133 @@ client.once('ready', () => {
     console.log(`✅ Бот увімкнено як ${client.user.tag}`);
 });
 
+// Track active duels to prevent duplicate processing
+const activeDuels = new Map();
+const processedInteractions = new Set();
+
 client.on(Events.InteractionCreate, async interaction => {
     try {
         if (interaction.isChatInputCommand()) {
             console.log(`📥 Slash command received: ${interaction.commandName}`);
+            
             if (interaction.commandName === 'дуель') {
-                const challenger = interaction.user;
-                const opponent = interaction.options.getUser('гравець');
-
-                const acceptRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('accept').setLabel('✅ Прийняти').setStyle(ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId('decline').setLabel('❌ Відхилити').setStyle(ButtonStyle.Danger)
-                );
-
-                if (opponent) {
-                    await interaction.reply({
-                        content: `🛡️ ${opponent}, тебе викликає на дуель ${challenger}!`,
-                        components: [acceptRow]
-                    });
-
-                    const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id === opponent.id;
-                    const collector = interaction.channel.createMessageComponentCollector({ filter, time: 15000 });
-
-                    collector.on('collect', async i => {
-                        await handleDuelResponse(i, challenger, opponent);
-                    });
-
-                } else {
-                    await interaction.reply({
-                        content: `⚔️ ${challenger} викликає на дуель будь-кого! Хто приймає виклик?`,
-                        components: [acceptRow]
-                    });
-
-                    const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id !== challenger.id;
-                    const collector = interaction.channel.createMessageComponentCollector({ filter, max: 1, time: 15000 });
-
-                    collector.on('collect', async i => {
-                        if (i.customId === 'accept') {
-                            await handleDuelResponse(i, challenger, i.user);
-                        } else {
-                            await i.update({
-                                content: `❌ Відкритий виклик було відхилено.`,
-                                components: []
-                            });
-                        }
-                    });
-                }
+                await handleDuelCommand(interaction);
             }
 
             if (interaction.commandName === 'статистика') {
-                const user = interaction.user;
-                const userStats = stats[user.id];
-
-                if (!userStats) {
-                    await interaction.reply({ content: 'У тебе ще немає дуелей.', ephemeral: true });
-                } else {
-                    const victories = Object.entries(userStats.victoriesOver || {})
-                        .map(([id, count]) => `<@${id}> — ${count} раз(и)`)
-                        .join('\n') || 'Нікого не переміг';
-
-                    await interaction.reply({
-                        content: `📊 Статистика для ${user.username}:\n✅ Перемог: ${userStats.wins}\n❌ Поразок: ${userStats.losses}\n\n👑 Перемоги над:\n${victories}`,
-                        ephemeral: true
-                    });
-                }
+                await handleStatsCommand(interaction);
             }
         }
 
         if (interaction.isButton()) {
             console.log(`🔘 Button clicked: ${interaction.customId}`);
-            await handleResultButton(interaction);
+            
+            // Prevent duplicate processing
+            const interactionId = `${interaction.id}_${interaction.customId}`;
+            if (processedInteractions.has(interactionId)) {
+                console.log('⚠️ Duplicate interaction ignored');
+                return;
+            }
+            processedInteractions.add(interactionId);
+            
+            // Clean up old interactions after 5 minutes
+            setTimeout(() => processedInteractions.delete(interactionId), 300000);
+            
+            await handleButtonInteraction(interaction);
         }
     } catch (err) {
         console.error('❌ Interaction error:', err);
-        try {
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: '🚨 Сталася помилка під час обробки запиту.', ephemeral: true });
-            } else {
-                await interaction.reply({ content: '🚨 Сталася помилка під час обробки запиту.', ephemeral: true });
-            }
-        } catch (err2) {
-            console.error('❌ Failed to reply with error message:', err2);
-        }
+        await handleInteractionError(interaction, err);
     }
 });
 
-const resolvedDuels = new Set();
+async function handleDuelCommand(interaction) {
+    const challenger = interaction.user;
+    const opponent = interaction.options.getUser('гравець');
 
-async function handleDuelResponse(interaction, challenger, opponent) {
-    console.log(`⚔️ Дуель між ${challenger.username} і ${opponent.username}`);
-
-    const resultRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`win_${challenger.id}_${opponent.id}`).setLabel('🥇 Я переміг').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`lose_${challenger.id}_${opponent.id}`).setLabel('🥈 Я програв').setStyle(ButtonStyle.Secondary)
+    const acceptRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('accept').setLabel('✅ Прийняти').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('decline').setLabel('❌ Відхилити').setStyle(ButtonStyle.Danger)
     );
 
-    let message;
-    try {
-        message = await interaction.update({
-            content: `⚔️ Дуель між ${challenger} і ${opponent} почалась! Хто переміг?`,
-            components: [resultRow],
-            fetchReply: true
+    if (opponent) {
+        await interaction.reply({
+            content: `🛡️ ${opponent}, тебе викликає на дуель ${challenger}!`,
+            components: [acceptRow]
         });
-    } catch (error) {
-        console.error('❌ Failed to send duel message:', error);
-        return;
-    }
 
-    const filter = i => {
-        const [result, chId, opId] = i.customId.split('_');
-        const isDuelButton = ['win', 'lose'].includes(result);
-        const isParticipant = [challenger.id, opponent.id].includes(i.user.id);
-        return isDuelButton && isParticipant;
-    };
-
-    const startCollector = () => {
-        const collector = message.createMessageComponentCollector({ filter, max: 1, time: 60000 });
+        const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id === opponent.id;
+        const collector = interaction.channel.createMessageComponentCollector({ filter, time: 15000 });
 
         collector.on('collect', async i => {
-            console.log(`🎯 Button pressed by ${i.user.username}: ${i.customId}`);
-            await handleResultButton(i);
+            await handleDuelResponse(i, challenger, opponent);
         });
 
-        collector.on('end', (collected, reason) => {
-            if (collected.size === 0 && reason === 'time') {
-                console.log(`⏳ Ніхто не натиснув кнопку. Продовжуємо чекати...`);
-                startCollector();
+    } else {
+        await interaction.reply({
+            content: `⚔️ ${challenger} викликає на дуель будь-кого! Хто приймає виклик?`,
+            components: [acceptRow]
+        });
+
+        const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id !== challenger.id;
+        const collector = interaction.channel.createMessageComponentCollector({ filter, max: 1, time: 15000 });
+
+        collector.on('collect', async i => {
+            if (i.customId === 'accept') {
+                await handleDuelResponse(i, challenger, i.user);
+            } else {
+                await i.update({
+                    content: `❌ Відкритий виклик було відхилено.`,
+                    components: []
+                });
             }
         });
-    };
-
-    startCollector();
+    }
 }
 
-async function handleResultButton(interaction) {
-    const [result, challengerId, opponentId] = interaction.customId.split('_');
-    const duelId = `${challengerId}_${opponentId}`;
+async function handleStatsCommand(interaction) {
+    const user = interaction.user;
+    const userStats = stats[user.id];
 
-    if (resolvedDuels.has(duelId)) return;
+    if (!userStats) {
+        await interaction.reply({ 
+            content: 'У тебе ще немає дуелей.',
+            flags: 64 // Ephemeral flag
+        });
+    } else {
+        const victories = Object.entries(userStats.victoriesOver || {})
+            .map(([id, count]) => `<@${id}> — ${count} раз(и)`)
+            .join('\n') || 'Нікого не переміг';
 
-    if (!['win', 'lose'].includes(result)) return;
-
-    if (![challengerId, opponentId].includes(interaction.user.id)) {
-        return interaction.reply({
-            content: 'Ти не учасник цієї дуелі!',
-            ephemeral: true
+        await interaction.reply({
+            content: `📊 Статистика для ${user.username}:\n✅ Перемог: ${userStats.wins}\n❌ Поразок: ${userStats.losses}\n\n👑 Перемоги над:\n${victories}`,
+            flags: 64 // Ephemeral flag
         });
     }
+}
 
-    resolvedDuels.add(duelId);
+async function handleButtonInteraction(interaction) {
+    const [result, challengerId, opponentId] = interaction.customId.split('_');
+    
+    if (!['win', 'lose'].includes(result)) return;
+
+    const duelId = `${challengerId}_${opponentId}`;
+    
+    // Check if this duel is already being processed
+    if (activeDuels.has(duelId)) {
+        console.log(`⚠️ Duel ${duelId} already being processed`);
+        return;
+    }
+    
+    activeDuels.set(duelId, true);
+
+    if (![challengerId, opponentId].includes(interaction.user.id)) {
+        activeDuels.delete(duelId);
+        return interaction.reply({
+            content: 'Ти не учасник цієї дуелі!',
+            flags: 64
+        });
+    }
 
     let winner, loser;
 
@@ -253,14 +231,59 @@ async function handleResultButton(interaction) {
     saveStats();
 
     try {
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.update({
+        await interaction.update({
+            content: `🏁 Переможець: <@${winner}>! Поразка: <@${loser}>.`,
+            components: []
+        });
+    } catch (err) {
+        console.error('❌ Failed to update interaction:', err);
+        // If update fails, try to reply
+        try {
+            await interaction.followUp({
                 content: `🏁 Переможець: <@${winner}>! Поразка: <@${loser}>.`,
-                components: []
+                flags: 64
+            });
+        } catch (err2) {
+            console.error('❌ Failed to send follow-up message:', err2);
+        }
+    } finally {
+        activeDuels.delete(duelId);
+    }
+}
+
+async function handleDuelResponse(interaction, challenger, opponent) {
+    console.log(`⚔️ Дуель між ${challenger.username} і ${opponent.username}`);
+
+    const resultRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`win_${challenger.id}_${opponent.id}`).setLabel('🥇 Я переміг').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`lose_${challenger.id}_${opponent.id}`).setLabel('🥈 Я програв').setStyle(ButtonStyle.Secondary)
+    );
+
+    try {
+        await interaction.update({
+            content: `⚔️ Дуель між ${challenger} і ${opponent} почалась! Хто переміг?`,
+            components: [resultRow]
+        });
+    } catch (error) {
+        console.error('❌ Failed to update duel interaction:', error);
+    }
+}
+
+async function handleInteractionError(interaction, err) {
+    try {
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: '🚨 Сталася помилка під час обробки запиту.',
+                flags: 64
+            });
+        } else {
+            await interaction.followUp({
+                content: '🚨 Сталася помилка під час обробки запиту.',
+                flags: 64
             });
         }
-    } catch (err) {
-        console.error('❌ Failed to update interaction (maybe it expired):', err);
+    } catch (err2) {
+        console.error('❌ Failed to send error message:', err2);
     }
 }
 
