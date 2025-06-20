@@ -210,19 +210,58 @@ client.on(Events.InteractionCreate, async interaction => {
 
 async function handleDuelResponse(interaction, challenger, opponent) {
     console.log(`⚔️ Дуель між ${challenger.username} і ${opponent.username}`);
+
     const resultRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`win_${challenger.id}_${opponent.id}`).setLabel(`🥇 Я переміг`).setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`lose_${challenger.id}_${opponent.id}`).setLabel(`🥈 Я програв`).setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder()
+            .setCustomId(`win_${challenger.id}_${opponent.id}`)
+            .setLabel(`🥇 Я переміг`)
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId(`lose_${challenger.id}_${opponent.id}`)
+            .setLabel(`🥈 Я програв`)
+            .setStyle(ButtonStyle.Secondary)
     );
 
+    let message;
     try {
-        await interaction.update({
+        message = await interaction.update({
             content: `⚔️ Дуель між ${challenger} і ${opponent} почалась! Хто переміг?`,
-            components: [resultRow]
+            components: [resultRow],
+            fetchReply: true
         });
     } catch (error) {
-        console.error('❌ Failed to update duel interaction:', error);
+        console.error('❌ Failed to send duel message:', error);
+        return;
     }
+
+    const filter = i => {
+        const [result, chId, opId] = i.customId.split('_');
+        const isDuelButton = ['win', 'lose'].includes(result);
+        const isParticipant = [challenger.id, opponent.id].includes(i.user.id);
+        return isDuelButton && isParticipant;
+    };
+
+    const startCollector = () => {
+        const collector = message.createMessageComponentCollector({
+            filter,
+            max: 1,
+            time: 60000 // 1 minute before retry
+        });
+
+        collector.on('collect', async i => {
+            console.log(`🎯 Button pressed by ${i.user.username}: ${i.customId}`);
+            client.emit(Events.InteractionCreate, i); // Delegate to main handler
+        });
+
+        collector.on('end', (collected, reason) => {
+            if (collected.size === 0 && reason === 'time') {
+                console.log(`⏳ Ніхто не натиснув кнопку. Продовжуємо чекати...`);
+                startCollector(); // Recursively restart the collector
+            }
+        });
+    };
+
+    startCollector();
 }
 
 client.login(token).catch(err => {
