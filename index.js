@@ -222,46 +222,43 @@ async function handleDuelResponse(interaction, challenger, opponent) {
             .setStyle(ButtonStyle.Secondary)
     );
 
-    let message;
     try {
-        message = await interaction.update({
+        const message = await interaction.update({
             content: `⚔️ Дуель між ${challenger} і ${opponent} почалась! Хто переміг?`,
             components: [resultRow],
-            fetchReply: true
+            fetchReply: true // Needed to use the collector
         });
-    } catch (error) {
-        console.error('❌ Failed to send duel message:', error);
-        return;
-    }
 
-    const filter = i => {
-        const [result, chId, opId] = i.customId.split('_');
-        const isDuelButton = ['win', 'lose'].includes(result);
-        const isParticipant = [challenger.id, opponent.id].includes(i.user.id);
-        return isDuelButton && isParticipant;
-    };
+        const filter = i => {
+            const [result, chId, opId] = i.customId.split('_');
+            const isDuelButton = ['win', 'lose'].includes(result);
+            const isParticipant = [challenger.id, opponent.id].includes(i.user.id);
+            return isDuelButton && isParticipant;
+        };
 
-    const startCollector = () => {
         const collector = message.createMessageComponentCollector({
             filter,
             max: 1,
-            time: 60000 // 1 minute before retry
+            time: 30000 // 30 seconds to respond
         });
 
         collector.on('collect', async i => {
             console.log(`🎯 Button pressed by ${i.user.username}: ${i.customId}`);
-            client.emit(Events.InteractionCreate, i); // Delegate to main handler
+            client.emit(Events.InteractionCreate, i); // Reuse existing handler logic
         });
 
         collector.on('end', (collected, reason) => {
-            if (collected.size === 0 && reason === 'time') {
-                console.log(`⏳ Ніхто не натиснув кнопку. Продовжуємо чекати...`);
-                startCollector(); // Recursively restart the collector
+            if (reason === 'time' && collected.size === 0) {
+                message.edit({
+                    content: `⏳ Час вичерпано. Дуель між ${challenger} і ${opponent} скасовано.`,
+                    components: []
+                });
             }
         });
-    };
 
-    startCollector();
+    } catch (error) {
+        console.error('❌ Failed to initiate duel collector:', error);
+    }
 }
 
 client.login(token).catch(err => {
