@@ -152,40 +152,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (interaction.isButton()) {
             console.log(`🔘 Button clicked: ${interaction.customId}`);
-            const [result, challengerId, opponentId] = interaction.customId.split('_');
-
-            if (!['win', 'lose'].includes(result)) return;
-
-            if (![challengerId, opponentId].includes(interaction.user.id)) {
-                return interaction.reply({
-                    content: 'Ти не учасник цієї дуелі!',
-                    ephemeral: true
-                });
-            }
-
-            let winner, loser;
-
-            if (result === 'win') {
-                winner = interaction.user.id;
-                loser = winner === challengerId ? opponentId : challengerId;
-            } else {
-                loser = interaction.user.id;
-                winner = loser === challengerId ? opponentId : challengerId;
-            }
-
-            if (!stats[winner]) stats[winner] = { wins: 0, losses: 0, victoriesOver: {} };
-            if (!stats[loser]) stats[loser] = { wins: 0, losses: 0, victoriesOver: {} };
-
-            stats[winner].wins++;
-            stats[winner].victoriesOver[loser] = (stats[winner].victoriesOver[loser] || 0) + 1;
-            stats[loser].losses++;
-
-            saveStats();
-
-            await interaction.update({
-                content: `🏁 Переможець: <@${winner}>! Поразка: <@${loser}>.`,
-                components: []
-            });
+            await handleResultButton(interaction);
         }
     } catch (err) {
         console.error('❌ Interaction error:', err);
@@ -233,7 +200,7 @@ async function handleDuelResponse(interaction, challenger, opponent) {
 
         collector.on('collect', async i => {
             console.log(`🎯 Button pressed by ${i.user.username}: ${i.customId}`);
-            client.emit(Events.InteractionCreate, i);
+            await handleResultButton(i);
         });
 
         collector.on('end', (collected, reason) => {
@@ -245,6 +212,49 @@ async function handleDuelResponse(interaction, challenger, opponent) {
     };
 
     startCollector();
+}
+
+async function handleResultButton(interaction) {
+    const [result, challengerId, opponentId] = interaction.customId.split('_');
+
+    if (!['win', 'lose'].includes(result)) return;
+
+    if (![challengerId, opponentId].includes(interaction.user.id)) {
+        return interaction.reply({
+            content: 'Ти не учасник цієї дуелі!',
+            ephemeral: true
+        });
+    }
+
+    let winner, loser;
+
+    if (result === 'win') {
+        winner = interaction.user.id;
+        loser = winner === challengerId ? opponentId : challengerId;
+    } else {
+        loser = interaction.user.id;
+        winner = loser === challengerId ? opponentId : challengerId;
+    }
+
+    if (!stats[winner]) stats[winner] = { wins: 0, losses: 0, victoriesOver: {} };
+    if (!stats[loser]) stats[loser] = { wins: 0, losses: 0, victoriesOver: {} };
+
+    stats[winner].wins++;
+    stats[winner].victoriesOver[loser] = (stats[winner].victoriesOver[loser] || 0) + 1;
+    stats[loser].losses++;
+
+    saveStats();
+
+    try {
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.update({
+                content: `🏁 Переможець: <@${winner}>! Поразка: <@${loser}>.`,
+                components: []
+            });
+        }
+    } catch (err) {
+        console.error('❌ Failed to update interaction (maybe it expired):', err);
+    }
 }
 
 client.login(token).catch(err => {
