@@ -13,6 +13,7 @@ const {
 } = require('discord.js');
 const fs = require('fs');
 const http = require('http');
+const path = require('path');
 
 const token = process.env.TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -32,26 +33,102 @@ try {
     process.exit(1);
 }
 
+// Improved stats management with persistence
 let stats = {};
 const statsFile = './stats.json';
+const statsBackupFile = './stats_backup.json';
 
-try {
-    if (fs.existsSync(statsFile)) {
-        stats = JSON.parse(fs.readFileSync(statsFile));
-        console.log('✅ Stats loaded from file.');
+// Try multiple locations for stats file
+const possibleStatsPaths = [
+    './stats.json',
+    './data/stats.json',
+    process.env.STATS_FILE || './stats.json'
+];
+
+function loadStats() {
+    for (const filePath of possibleStatsPaths) {
+        try {
+            if (fs.existsSync(filePath)) {
+                const data = fs.readFileSync(filePath, 'utf8');
+                stats = JSON.parse(data);
+                console.log(`✅ Stats loaded from ${filePath}`);
+                return;
+            }
+        } catch (err) {
+            console.error(`❌ Failed to read stats from ${filePath}:`, err);
+        }
     }
-} catch (err) {
-    console.error('❌ Failed to read stats file:', err);
+    
+    // Try to load from backup
+    try {
+        if (fs.existsSync(statsBackupFile)) {
+            const data = fs.readFileSync(statsBackupFile, 'utf8');
+            stats = JSON.parse(data);
+            console.log('✅ Stats loaded from backup file');
+            return;
+        }
+    } catch (err) {
+        console.error('❌ Failed to read backup stats:', err);
+    }
+    
+    console.log('📝 No existing stats found, starting fresh');
+    stats = {};
 }
 
 function saveStats() {
     try {
+        // Ensure data directory exists
+        const dataDir = './data';
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+        }
+        
+        // Save to primary location
+        const primaryPath = './data/stats.json';
+        fs.writeFileSync(primaryPath, JSON.stringify(stats, null, 2));
+        
+        // Also save to root for compatibility
         fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
-        console.log('✅ Stats saved.');
+        
+        // Create backup
+        fs.writeFileSync(statsBackupFile, JSON.stringify(stats, null, 2));
+        
+        console.log('✅ Stats saved to multiple locations');
     } catch (err) {
         console.error('❌ Failed to save stats:', err);
+        // Try to save to backup only
+        try {
+            fs.writeFileSync(statsBackupFile, JSON.stringify(stats, null, 2));
+            console.log('✅ Stats saved to backup only');
+        } catch (err2) {
+            console.error('❌ Failed to save even to backup:', err2);
+        }
     }
 }
+
+// Load stats on startup
+loadStats();
+
+// Periodic backup every 5 minutes
+setInterval(() => {
+    if (Object.keys(stats).length > 0) {
+        console.log('💾 Creating periodic backup...');
+        saveStats();
+    }
+}, 5 * 60 * 1000);
+
+// Save stats before process exits
+process.on('SIGINT', () => {
+    console.log('🔄 Saving stats before shutdown...');
+    saveStats();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('🔄 Saving stats before shutdown...');
+    saveStats();
+    process.exit(0);
+});
 
 const commands = [
     new SlashCommandBuilder()
@@ -62,7 +139,10 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('статистика')
-        .setDescription('Переглянути свою статистику')
+        .setDescription('Переглянути свою статистику'),
+    new SlashCommandBuilder()
+        .setName('резерв')
+        .setDescription('Створити резервну копію статистики (тільки для адміністраторів)')
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(token);
@@ -98,6 +178,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
             if (interaction.commandName === 'статистика') {
                 await handleStatsCommand(interaction);
+            }
+
+            if (interaction.commandName === 'резерв') {
+                await handleBackupCommand(interaction);
             }
         }
 
@@ -177,13 +261,44 @@ async function handleStatsCommand(interaction) {
             flags: 64 // Ephemeral flag
         });
     } else {
+        const totalDuels = userStats.wins + userStats.losses;
+        const winRate = totalDuels > 0 ? ((userStats.wins / totalDuels) * 100).toFixed(1) : 0;
+        
         const victories = Object.entries(userStats.victoriesOver || {})
             .map(([id, count]) => `<@${id}> — ${count} раз(и)`)
             .join('\n') || 'Нікого не переміг';
 
         await interaction.reply({
-            content: `📊 Статистика для ${user.username}:\n✅ Перемог: ${userStats.wins}\n❌ Поразок: ${userStats.losses}\n\n👑 Перемоги над:\n${victories}`,
+            content: `📊 Статистика для ${user.username}:\n✅ Перемог: ${userStats.wins}\n❌ Поразок: ${userStats.losses}\n📈 Всього дуелей: ${totalDuels}\n🎯 Відсоток перемог: ${winRate}%\n\n👑 Перемоги над:\n${victories}`,
             flags: 64 // Ephemeral flag
+        });
+    }
+}
+
+async function handleBackupCommand(interaction) {
+    // Check if user has administrator permissions
+    if (!interaction.member.permissions.has('Administrator')) {
+        await interaction.reply({
+            content: '❌ У тебе немає прав для використання цієї команди.',
+            flags: 64
+        });
+        return;
+    }
+
+    try {
+        saveStats();
+        const totalUsers = Object.keys(stats).length;
+        const totalDuels = Object.values(stats).reduce((sum, userStats) => sum + userStats.wins + userStats.losses, 0);
+        
+        await interaction.reply({
+            content: `✅ Резервну копію створено!\n📊 Загальна статистика:\n👥 Користувачів: ${totalUsers}\n⚔️ Дуелей: ${totalDuels}`,
+            flags: 64
+        });
+    } catch (err) {
+        console.error('❌ Backup command error:', err);
+        await interaction.reply({
+            content: '❌ Помилка при створенні резервної копії.',
+            flags: 64
         });
     }
 }
