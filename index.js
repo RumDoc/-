@@ -150,10 +150,10 @@ client.on(Events.InteractionCreate, async interaction => {
             }
         }
 
-        if (interaction.isButton()) {
-            console.log(`🔘 Button clicked: ${interaction.customId}`);
-            await handleResultButton(interaction);
-        }
+        // if (interaction.isButton()) {
+        //     console.log(`🔘 Button clicked: ${interaction.customId}`);
+        //     await handleResultButton(interaction);
+        // }
     } catch (err) {
         console.error('❌ Interaction error:', err);
         try {
