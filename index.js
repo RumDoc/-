@@ -11,6 +11,7 @@ const {
     Events
 } = require('discord.js');
 const fs = require('fs');
+const http = require('http');
 
 const token = process.env.TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -227,4 +228,15 @@ async function handleDuelResponse(interaction, challenger, opponent) {
 
 client.login(token).catch(err => {
     console.error('❌ Failed to login to Discord:', err);
+});
+
+// Simple HTTP server for Render.com compatibility
+const port = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Discord Bot is running!');
+});
+
+server.listen(port, () => {
+    console.log(`🌐 HTTP server listening on port ${port}`);
 });
