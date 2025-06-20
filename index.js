@@ -106,33 +106,41 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   // Обробка кнопок результату
-  if (interaction.isButton()) {
-    const [result, winnerId, loserId] = interaction.customId.split('_');
+ if (interaction.isButton()) {
+  const [result, challengerId, opponentId] = interaction.customId.split('_');
 
-    if (!['win', 'lose'].includes(result)) return;
+  if (!['win', 'lose'].includes(result)) return;
 
-    if (![winnerId, loserId].includes(interaction.user.id)) {
-      return interaction.reply({ content: 'Ти не учасник цієї дуелі!', ephemeral: true });
-    }
-
-    const winner = result === 'win' ? winnerId : loserId === interaction.user.id ? loserId : winnerId;
-    const loser = winner === winnerId ? loserId : winnerId;
-
-    if (!stats[winner]) stats[winner] = { wins: 0, losses: 0, victoriesOver: {} };
-    if (!stats[loser]) stats[loser] = { wins: 0, losses: 0, victoriesOver: {} };
-
-    stats[winner].wins++;
-    stats[winner].victoriesOver[loser] = (stats[winner].victoriesOver[loser] || 0) + 1;
-    stats[loser].losses++;
-
-    saveStats();
-
-    await interaction.update({
-      content: `🏁 Переможець: <@${winner}>! Поразка: <@${loser}>.`,
-      components: []
-    });
+  // Перевіряємо, що натискає учасник дуелі
+  if (![challengerId, opponentId].includes(interaction.user.id)) {
+    return interaction.reply({ content: 'Ти не учасник цієї дуелі!', ephemeral: true });
   }
-});
+
+  let winner, loser;
+
+  if (result === 'win') {
+    winner = interaction.user.id;
+    loser = winner === challengerId ? opponentId : challengerId;
+  } else { // result === 'lose'
+    loser = interaction.user.id;
+    winner = loser === challengerId ? opponentId : challengerId;
+  }
+
+  if (!stats[winner]) stats[winner] = { wins: 0, losses: 0, victoriesOver: {} };
+  if (!stats[loser]) stats[loser] = { wins: 0, losses: 0, victoriesOver: {} };
+
+  stats[winner].wins++;
+  stats[winner].victoriesOver[loser] = (stats[winner].victoriesOver[loser] || 0) + 1;
+  stats[loser].losses++;
+
+  saveStats();
+
+  await interaction.update({
+    content: `🏁 Переможець: <@${winner}>! Поразка: <@${loser}>.`,
+    components: []
+  });
+}
+
 
 // 🔧 Функція запуску дуелі
 async function handleDuelResponse(interaction, challenger, opponent) {
