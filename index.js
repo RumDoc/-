@@ -1,3 +1,4 @@
+// Load environment variables
 require('dotenv').config();
 const {
     Client,
@@ -22,19 +23,25 @@ if (!token || !clientId || !guildId) {
     process.exit(1);
 }
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
-});
+let client;
+try {
+    client = new Client({ intents: [GatewayIntentBits.Guilds] });
+    console.log('✅ Discord client initialized.');
+} catch (error) {
+    console.error('❌ Failed to initialize Discord client:', error);
+    process.exit(1);
+}
 
 let stats = {};
 const statsFile = './stats.json';
 
-if (fs.existsSync(statsFile)) {
-    try {
+try {
+    if (fs.existsSync(statsFile)) {
         stats = JSON.parse(fs.readFileSync(statsFile));
-    } catch (err) {
-        console.error('❌ Failed to read stats file:', err);
+        console.log('✅ Stats loaded from file.');
     }
+} catch (err) {
+    console.error('❌ Failed to read stats file:', err);
 }
 
 function saveStats() {
@@ -46,9 +53,6 @@ function saveStats() {
     }
 }
 
-// ----------------------------
-// Slash-команди
-// ----------------------------
 const commands = [
     new SlashCommandBuilder()
         .setName('дуель')
@@ -99,10 +103,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     });
 
                     const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id === opponent.id;
-                    const collector = interaction.channel.createMessageComponentCollector({
-                        filter,
-                        time: 15000
-                    });
+                    const collector = interaction.channel.createMessageComponentCollector({ filter, time: 15000 });
 
                     collector.on('collect', async i => {
                         await handleDuelResponse(i, challenger, opponent);
@@ -115,11 +116,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     });
 
                     const filter = i => ['accept', 'decline'].includes(i.customId) && i.user.id !== challenger.id;
-                    const collector = interaction.channel.createMessageComponentCollector({
-                        filter,
-                        max: 1,
-                        time: 15000
-                    });
+                    const collector = interaction.channel.createMessageComponentCollector({ filter, max: 1, time: 15000 });
 
                     collector.on('collect', async i => {
                         if (i.customId === 'accept') {
@@ -139,10 +136,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 const userStats = stats[user.id];
 
                 if (!userStats) {
-                    await interaction.reply({
-                        content: 'У тебе ще немає дуелей.',
-                        ephemeral: true
-                    });
+                    await interaction.reply({ content: 'У тебе ще немає дуелей.', ephemeral: true });
                 } else {
                     const victories = Object.entries(userStats.victoriesOver || {})
                         .map(([id, count]) => `<@${id}> — ${count} раз(и)`)
@@ -195,16 +189,14 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     } catch (err) {
         console.error('❌ Interaction error:', err);
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({
-                content: '🚨 Сталася помилка під час обробки запиту.',
-                ephemeral: true
-            });
-        } else {
-            await interaction.reply({
-                content: '🚨 Сталася помилка під час обробки запиту.',
-                ephemeral: true
-            });
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: '🚨 Сталася помилка під час обробки запиту.', ephemeral: true });
+            } else {
+                await interaction.reply({ content: '🚨 Сталася помилка під час обробки запиту.', ephemeral: true });
+            }
+        } catch (err2) {
+            console.error('❌ Failed to reply with error message:', err2);
         }
     }
 });
@@ -213,14 +205,8 @@ async function handleDuelResponse(interaction, challenger, opponent) {
     console.log(`⚔️ Дуель між ${challenger.username} і ${opponent.username}`);
 
     const resultRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`win_${challenger.id}_${opponent.id}`)
-            .setLabel(`🥇 Я переміг`)
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId(`lose_${challenger.id}_${opponent.id}`)
-            .setLabel(`🥈 Я програв`)
-            .setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`win_${challenger.id}_${opponent.id}`).setLabel('🥇 Я переміг').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`lose_${challenger.id}_${opponent.id}`).setLabel('🥈 Я програв').setStyle(ButtonStyle.Secondary)
     );
 
     let message;
@@ -243,21 +229,17 @@ async function handleDuelResponse(interaction, challenger, opponent) {
     };
 
     const startCollector = () => {
-        const collector = message.createMessageComponentCollector({
-            filter,
-            max: 1,
-            time: 60000 // 1 minute before retry
-        });
+        const collector = message.createMessageComponentCollector({ filter, max: 1, time: 60000 });
 
         collector.on('collect', async i => {
             console.log(`🎯 Button pressed by ${i.user.username}: ${i.customId}`);
-            client.emit(Events.InteractionCreate, i); // Delegate to main handler
+            client.emit(Events.InteractionCreate, i);
         });
 
         collector.on('end', (collected, reason) => {
             if (collected.size === 0 && reason === 'time') {
                 console.log(`⏳ Ніхто не натиснув кнопку. Продовжуємо чекати...`);
-                startCollector(); // Recursively restart the collector
+                startCollector();
             }
         });
     };
@@ -269,13 +251,16 @@ client.login(token).catch(err => {
     console.error('❌ Failed to login to Discord:', err);
 });
 
-// Simple HTTP server for Render.com compatibility
 const port = process.env.PORT || 3000;
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Discord Bot is running!');
-});
+try {
+    const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Discord Bot is running!');
+    });
 
-server.listen(port, () => {
-    console.log(`🌐 HTTP server listening on port ${port}`);
-});
+    server.listen(port, () => {
+        console.log(`🌐 HTTP server listening on port ${port}`);
+    });
+} catch (err) {
+    console.error('❌ Failed to start HTTP server:', err);
+}
